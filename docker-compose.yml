@@ -1,0 +1,60 @@
+services:
+  dazzleduck:
+    image: "dazzleduck/dazzleduck:latest"
+    container_name: "dazzleduck"
+    tty: true
+    stdin_open: true
+    restart: "unless-stopped"
+
+    expose:
+      - "8081"
+      - "59307"
+
+    volumes:
+      - "warehouse-data:/data"
+
+    command:
+      --conf warehouse=/data
+      --conf users.0.password=admin
+      --conf dazzleduck_server.warehouse=/data
+      --conf dazzleduck_server.jwt_token.verify_signature=true
+      --conf dazzleduck_server.use_encryption=false
+      --conf 'dazzleduck_server.http.allow-origin=["https://dazzleduck-ui.netlify.app","http://localhost:5174"]'
+
+  envoy:
+    image: "envoyproxy/envoy:v1.31-latest"
+    container_name: "envoy-router"
+    restart: "unless-stopped"
+
+    ports:
+      - "443:443"
+      - "59307:59307"
+
+    volumes:
+      - "./envoy.yaml:/etc/envoy/envoy.yaml:ro"
+      - "./certs:/etc/envoy/certs:ro"
+
+    depends_on:
+      - "dazzleduck"
+
+  # =========================
+  # OTEL COLLECTOR
+  # =========================
+  otel-collector:
+    image: dazzleduck-sql-otel-collector:latest
+    container_name: dazzleduck-otel-collector
+    ports:
+      - "4317:4317"   # gRPC OTLP
+    volumes:
+      - "./otel-logs:/workspace/otel-logs"
+      - "./otel-traces:/workspace/otel-traces"
+      - "./otel-metrics:/workspace/otel-metrics"
+
+    command:
+      --conf otel_collector.authentication=none
+
+volumes:
+  warehouse-data: {}
+  otel-logs:
+  otel-traces:
+  otel-metrics:

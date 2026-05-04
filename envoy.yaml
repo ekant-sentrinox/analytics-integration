@@ -1,0 +1,111 @@
+static_resources:
+
+  listeners:
+    # =========================
+    # HTTPS LISTENER (443 → 8081)
+    # =========================
+    - name: listener_https
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 443
+
+      filter_chains:
+        - transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+              common_tls_context:
+                tls_certificates:
+                  - certificate_chain:
+                      filename: "/etc/envoy/certs/cert.pem"
+                    private_key:
+                      filename: "/etc/envoy/certs/key.pem"
+
+          filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: ingress_https
+                codec_type: AUTO
+
+                route_config:
+                  name: local_route
+                  virtual_hosts:
+                    - name: dazzleduck_host
+                      domains: ["*"]
+
+                      routes:
+                        - match:
+                            prefix: "/"
+                          route:
+                            cluster: dazzleduck_service
+
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+
+    # =========================
+    # TCP LISTENER (59307 → 59307)
+    # =========================
+    - name: listener_59307
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 59307
+
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.tcp_proxy
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+                stat_prefix: tcp_59307
+                cluster: dazzleduck_service_59307
+
+
+  clusters:
+    # =========================
+    # HTTP CLUSTER (8081)
+    # =========================
+    - name: dazzleduck_service
+      connect_timeout: 5s
+      type: STRICT_DNS
+      lb_policy: ROUND_ROBIN
+
+      load_assignment:
+        cluster_name: dazzleduck_service
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: dazzleduck
+                      port_value: 8081
+
+
+    # =========================
+    # TCP CLUSTER (59307)
+    # =========================
+    - name: dazzleduck_service_59307
+      connect_timeout: 5s
+      type: STRICT_DNS
+      lb_policy: ROUND_ROBIN
+
+      load_assignment:
+        cluster_name: dazzleduck_service_59307
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: dazzleduck
+                      port_value: 59307
+
+admin:
+  access_log_path: /tmp/admin_access.log
+  address:
+    socket_address:
+      address: 127.0.0.1   # NOT exposed externally
+      port_value: 9901
