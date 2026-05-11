@@ -65,6 +65,52 @@ static_resources:
                 cluster: dazzleduck_service_59307
 
 
+    # =========================
+    # OTLP gRPC LISTENER (4317 → otel-collector:4317)
+    # =========================
+    - name: listener_otlp_grpc
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 4317
+
+      filter_chains:
+        - transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+              common_tls_context:
+                tls_certificates:
+                  - certificate_chain:
+                      filename: "/etc/envoy/certs/cert.pem"
+                    private_key:
+                      filename: "/etc/envoy/certs/key.pem"
+
+          filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: ingress_otlp_grpc
+                codec_type: HTTP2        # gRPC requires HTTP/2
+
+                route_config:
+                  name: otlp_route
+                  virtual_hosts:
+                    - name: otel_collector_host
+                      domains: ["*"]
+                      routes:
+                        - match:
+                            prefix: "/"
+                          route:
+                            cluster: otel_collector_service
+                            timeout: 0s  # disable timeout for streaming gRPC
+
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+
   clusters:
     # =========================
     # HTTP CLUSTER (8081)
@@ -102,6 +148,27 @@ static_resources:
                     socket_address:
                       address: dazzleduck
                       port_value: 59307
+
+
+    # =========================
+    # OTLP gRPC CLUSTER (4317)
+    # =========================
+    - name: otel_collector_service
+      connect_timeout: 5s
+      type: STRICT_DNS
+      lb_policy: ROUND_ROBIN
+      http2_protocol_options: {}        # required for gRPC upstream
+
+      load_assignment:
+        cluster_name: otel_collector_service
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: otel-collector
+                      port_value: 4317
+
 
 admin:
   access_log_path: /tmp/admin_access.log

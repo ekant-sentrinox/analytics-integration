@@ -1,4 +1,29 @@
 services:
+  # ---------- Key Generation ----------
+  generate-cert:
+    image: alpine/openssl
+    container_name: generate-cert
+    volumes:
+      - ${CERT_PATH:-./certs}:/certs
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if [ -f /certs/cert.pem ]; then
+          echo "TLS cert already exists, skipping"
+          exit 0
+        fi
+
+        echo "Generating self-signed TLS cert..."
+        openssl req -x509 -newkey rsa:2048 -nodes \
+          -keyout /certs/key.pem \
+          -out /certs/cert.pem \
+          -days 365 \
+          -subj "/CN=dazzleduck.com"
+
+        echo "TLS certificate generated"
+
+
   dazzleduck:
     image: "dazzleduck/dazzleduck:latest"
     container_name: "dazzleduck"
@@ -8,7 +33,6 @@ services:
 
     expose:
       - "8081"
-      - "59307"
 
     volumes:
       - "warehouse-data:/data"
@@ -21,6 +45,28 @@ services:
       --conf dazzleduck_server.use_encryption=false
       --conf 'dazzleduck_server.http.allow-origin=["https://dazzleduck-ui.netlify.app","http://localhost:5174"]'
 
+  postgres:
+    image: postgres:17.5
+    container_name: postgres-db
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: sentrinox
+      POSTGRES_PASSWORD: sentrinox
+      POSTGRES_DB: sentrinox_db
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - meta_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U sentrinox -d sentrinox_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   envoy:
     image: "envoyproxy/envoy:v1.31-latest"
     container_name: "envoy-router"
@@ -29,6 +75,7 @@ services:
     ports:
       - "443:443"
       - "59307:59307"
+      - "4317:4317"
 
     volumes:
       - "./envoy.yaml:/etc/envoy/envoy.yaml:ro"
@@ -36,25 +83,80 @@ services:
 
     depends_on:
       - "dazzleduck"
+      - "generate-cert"
 
   # =========================
-  # OTEL COLLECTOR
+  # MINIO (S3-compatible storage for OTEL data)
+  # =========================
+  minio:
+    image: minio/minio:latest
+    container_name: minio-server
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"  # S3 API
+      - "9001:9001"  # MinIO Console
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+
+  # =========================
+  # MINIO CLIENT (Initialize buckets)
+  # =========================
+  minio-init:
+    image: minio/mc:latest
+    container_name: minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        until mc alias set minio http://minio:9000 minioadmin minioadmin123; do
+          echo 'Waiting for MinIO...'
+          sleep 2
+        done
+        echo 'Creating OTEL buckets...'
+        mc mb minio/otel/main/logs --ignore-existing
+        mc mb minio/otel/main/traces --ignore-existing
+        mc mb minio/otel/main/metrics --ignore-existing
+        echo 'Buckets created successfully'
+        mc ls minio/
+
+  # =========================
+  # OTEL COLLECTOR (Enhanced with MinIO + PostgreSQL metadata)
   # =========================
   otel-collector:
     image: dazzleduck-sql-otel-collector:latest
     container_name: dazzleduck-otel-collector
-    ports:
-      - "4317:4317"   # gRPC OTLP
-    volumes:
-      - "./otel-logs:/workspace/otel-logs"
-      - "./otel-traces:/workspace/otel-traces"
-      - "./otel-metrics:/workspace/otel-metrics"
+    depends_on:
+      minio:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    # Note: No port mapping needed - accessed via Envoy proxy on port 4317
 
+    volumes:
+      # Mount configuration file
+      - "./application-minio.conf:/workspace/application.conf:ro"
     command:
-      --conf otel_collector.authentication=none
+      - -c
+      - /workspace/application.conf
 
 volumes:
+  meta_data:
   warehouse-data: {}
   otel-logs:
   otel-traces:
   otel-metrics:
+  minio-data:
