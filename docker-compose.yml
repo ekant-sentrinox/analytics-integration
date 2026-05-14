@@ -174,7 +174,7 @@ services:
         - compaction-data:/tmp/duckdb
       command:
 
-        --conf compaction.catalog=otel_catalog \
+        --conf compaction.catalog=otel \
         --conf compaction.tables.0=logs \
         --conf compaction.tables.1=traces \
         --conf compaction.tables.2=metrics \
@@ -194,7 +194,7 @@ services:
         URL_STYLE '\''path'\''
         );
 
-        ATTACH '\''ducklake:postgres:host=postgres port=5432 user=sentrinox password=sentrinox dbname=sentrinox_db'\'' AS otel_catalog (
+        ATTACH '\''ducklake:postgres:host=postgres port=5432 user=sentrinox password=sentrinox dbname=sentrinox_db'\'' AS otel (
         DATA_PATH '\''s3://otel/main'\'',
         DATA_INLINING_ROW_LIMIT 0
         );
