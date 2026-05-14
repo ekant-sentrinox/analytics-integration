@@ -36,14 +36,18 @@ services:
 
     volumes:
       - "warehouse-data:/data"
+      - "./scripts:/startup"
 
     command:
-      --conf warehouse=/data
-      --conf users.0.password=admin
-      --conf dazzleduck_server.warehouse=/data
-      --conf dazzleduck_server.jwt_token.verify_signature=true
-      --conf dazzleduck_server.use_encryption=false
-      --conf 'dazzleduck_server.http.allow-origin=["https://dazzleduck-ui.netlify.app","http://localhost:5174"]'
+          --conf warehouse=/data \
+          --conf users.0.password=admin \
+          --conf dazzleduck_server.warehouse=/data \
+          --conf dazzleduck_server.jwt_token.verify_signature=true \
+          --conf dazzleduck_server.use_encryption=false \
+          --conf dazzleduck_server.startup_script_provider.script_location=/startup/dazzleduck-startup-script.sql \
+          --conf 'dazzleduck_server.http.allow-origin=["https://dazzleduck-ui.netlify.app","http://localhost:5174"]'
+    depends_on:
+      - "otel-collector"
 
   postgres:
     image: postgres:17.5
@@ -142,8 +146,6 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
     # Note: No port mapping needed - accessed via Envoy proxy on port 4317
 
     volumes:
@@ -153,10 +155,60 @@ services:
       - -c
       - /workspace/application.conf
 
+  compaction:
+      image: analytics-compaction:latest
+      container_name: analytics-compaction
+      restart: unless-stopped
+      working_dir: /tmp/duckdb
+      user: "0:0"
+      depends_on:
+        postgres:
+          condition: service_healthy
+        minio:
+          condition: service_healthy
+        minio-init:
+          condition: service_completed_successfully
+      ports:
+        - "9090:9090"
+      volumes:
+        - compaction-data:/tmp/duckdb
+      command:
+
+        --conf compaction.catalog=otel_catalog \
+        --conf compaction.tables.0=logs \
+        --conf compaction.tables.1=traces \
+        --conf compaction.tables.2=metrics \
+        --conf 'compaction.script="""
+        INSTALL ducklake;
+        LOAD ducklake;
+
+        INSTALL httpfs;
+        LOAD httpfs;
+
+        CREATE OR REPLACE SECRET minio_s3 (
+        TYPE S3,
+        KEY_ID '\''minioadmin'\'',
+        SECRET '\''minioadmin123'\'',
+        ENDPOINT '\''minio:9000'\'',
+        USE_SSL false,
+        URL_STYLE '\''path'\''
+        );
+
+        ATTACH '\''ducklake:postgres:host=postgres port=5432 user=sentrinox password=sentrinox dbname=sentrinox_db'\'' AS otel_catalog (
+        DATA_PATH '\''s3://otel/main'\'',
+        DATA_INLINING_ROW_LIMIT 0
+        );
+        """' \
+        --conf compaction.minor.frequency="1 minute" \
+        --conf compaction.minor.max-file-size="8 MiB" \
+        --conf compaction.major.frequency="1 hour" \
+        --conf compaction.major.max-file-size="64 MiB" \
+        --conf compaction.major.snapshot-retention="5 minutes" \
+        --conf metrics.port=9090
+
+
 volumes:
   meta_data:
   warehouse-data: {}
-  otel-logs:
-  otel-traces:
-  otel-metrics:
   minio-data:
+  compaction-data:

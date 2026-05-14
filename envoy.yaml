@@ -85,6 +85,7 @@ static_resources:
                       filename: "/etc/envoy/certs/cert.pem"
                     private_key:
                       filename: "/etc/envoy/certs/key.pem"
+                alpn_protocols: ["h2", "http/1.1"]
 
           filters:
             - name: envoy.filters.network.http_connection_manager

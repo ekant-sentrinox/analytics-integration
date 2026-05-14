@@ -100,7 +100,7 @@ echo ""
 TEST_OUTPUT=$(docker run --rm --network "$NETWORK_NAME" \
     -v "$(pwd):/app" \
     python:3.12-slim \
-    bash -c "pip install pyjwt opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp-proto-grpc -q && python /app/test_otel.py" 2>&1)
+    bash -c "pip install pyjwt opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp-proto-grpc -q && python /app/otel-test-mul.py" 2>&1)
 
 if echo "$TEST_OUTPUT" | grep -q "Sent logs, traces, and metrics"; then
     print_success "OTel test completed successfully"
