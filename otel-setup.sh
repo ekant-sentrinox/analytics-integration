@@ -83,8 +83,8 @@ fi
 # Step 3: Get the correct network name
 print_info "Determining Docker network name..."
 
-# Simple approach: get network from the running collector container
-NETWORK_NAME=$(docker inspect dazzleduck-otel-collector --format='{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' 2>/dev/null)
+# Simple approach: get network from the running dazzleduck container
+NETWORK_NAME=$(docker inspect dazzleduck --format='{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' 2>/dev/null)
 
 if [ -z "$NETWORK_NAME" ]; then
     print_error "Could not determine network name. Is the collector running?"
@@ -100,11 +100,11 @@ echo ""
 TEST_OUTPUT=$(docker run --rm --network "$NETWORK_NAME" \
     -v "$(pwd):/app" \
     python:3.12-slim \
-    bash -c "pip install pyjwt opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp-proto-grpc -q && python /app/otel-test-mul.py" 2>&1)
+    bash -c "pip install pyjwt opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp-proto-grpc -q && python /app/dummy_data.py" 2>&1)
 
-if echo "$TEST_OUTPUT" | grep -q "Sent logs, traces, and metrics"; then
+if echo "$TEST_OUTPUT" | grep -q "All collectors finished"; then
     print_success "OTel test completed successfully"
-    echo "$TEST_OUTPUT" | grep -E "JWT:|Sent"
+    echo "$TEST_OUTPUT" | grep -E "JWT:|Sending|Done\."
 else
     print_error "OTel test failed. Output:"
     echo "$TEST_OUTPUT"
@@ -130,19 +130,8 @@ fi
 echo ""
 echo "📊 OTel Data in MinIO:"
 echo "======================"
-docker exec minio-server mc ls --recursive local/ | grep -E "otel-logs|otel-traces|otel-metrics"
+docker exec minio-server mc ls --recursive local/ | grep -E "otel/main/gateway_metrics|otel/main/trace_log|otel/main/transaction_log"
 
-# Count files
-LOGS_COUNT=$(docker exec minio-server mc ls --recursive local/otel-logs 2>/dev/null | wc -l)
-TRACES_COUNT=$(docker exec minio-server mc ls --recursive local/otel-traces 2>/dev/null | wc -l)
-METRICS_COUNT=$(docker exec minio-server mc ls --recursive local/otel-metrics 2>/dev/null | wc -l)
-
-echo ""
-echo "📈 Summary:"
-echo "=========="
-echo "  Logs: $LOGS_COUNT files"
-echo "  Traces: $TRACES_COUNT files"
-echo "  Metrics: $METRICS_COUNT files"
 
 # Step 5: Show service status
 echo ""
